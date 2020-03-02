@@ -26,7 +26,7 @@ class Paydo extends PaymentModule
     {
         $this->name                   = 'paydo';
         $this->tab                    = 'payments_gateways';
-        $this->version                = '1.0.1';
+        $this->version                = '1.0.0';
         $this->author                 = 'PAYDO';
         $this->controllers            = array('payment', 'validation', 'failPage', 'callback');
         $this->currencies             = true;
