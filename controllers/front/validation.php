@@ -2,154 +2,117 @@
 
 class PaydoValidationModuleFrontController extends ModuleFrontController
 {
+	public function postProcess()
+	{
+		$cart = $this->context->cart;
+		$language = Configuration::get('PAYDO_LANGUAGE') ?: 'en';
+		$cartId = (int) $cart->id;
 
-    /**
-     * Process the order
-     *
-     * @throws \Exception
-     */
-    public function postProcess()
-    {
-        /**
-         * Get current cart object from session
-         */
-        $cart = $this->context->cart;
-        $authorized = false;
+		if (!$this->module->active || $cart->id_customer == 0 || $cart->id_address_delivery == 0 || $cart->id_address_invoice  == 0) {
+			Tools::redirect('index.php?controller=order&step=1');
+		}
 
-        /**
-         * Verify if this module is enabled and if the cart has
-         * a valid customer, delivery address and invoice address
-         */
-        if (!$this->module->active || $cart->id_customer == 0 || $cart->id_address_delivery == 0
-            || $cart->id_address_invoice == 0) {
-            Tools::redirect('index.php?controller=order&step=1');
-        }
+		$customer = new Customer($cart->id_customer);
+		if (!Validate::isLoadedObject($customer)) {
+			Tools::redirect('index.php?controller=order&step=1');
+		}
 
-        /**
-         * Verify if this payment module is authorized
-         */
-        foreach (Module::getPaymentModules() as $module) {
-            if ($module['name'] == 'paydo') {
-                $authorized = true;
-                break;
-            }
-        }
+		$items = [];
+		foreach ($cart->getProducts() as $product) {
+			$items[] = [
+				'id' => (string) $product['id_product'],
+				'name' => $product['name'],
+				'price' => number_format((float) $product['price_wt'], 2, '.', ''),
+				'quantity' => (int) $product['cart_quantity'],
+			];
+		}
 
-        if (!$authorized) {
-            die($this->l('This payment method is not available.'));
-        }
+		$address = new Address($cart->id_address_delivery);
 
-        /** @var CustomerCore $customer */
-        $customer = new Customer($cart->id_customer);
+		$amount = number_format((float) $cart->getOrderTotal(true, Cart::BOTH), 2, '.', '');
+		$currencyObj = Currency::getCurrency($cart->id_currency);
+		$currency = $currencyObj['iso_code'];
 
-        /**
-         * Check if this is a valid customer account
-         */
-        if (!Validate::isLoadedObject($customer)) {
-            Tools::redirect('index.php?controller=order&step=1');
-        }
+		$request = [
+			'publicKey' => Configuration::get('PAYDO_PUBLIC_KEY'),
+			'order' => [
+				'id' => (string) $cartId,
+				'amount' => $amount,
+				'currency' => $currency,
+				'description' => 'Payment order #' . $cartId,
+				'items' => $items,
+			],
+			'payer' => [
+				'email' => $customer->email,
+				'name' => $customer->firstname . ' ' . $customer->lastname,
+				'phone' => $address->phone ?: '',
+				"extraFields" => [
+					"date_of_birth" => $customer->birthday ?: '',
+				]
+			],
+			'resultUrl' => $this->context->link->getModuleLink($this->module->name, 'createOrder', [
+				'cart_id' => $cartId,
+				'key' => $customer->secure_key,
+			], true),
+			'failPath' => $this->context->link->getModuleLink($this->module->name, 'failPage', ['cart_id' => $cartId], true),
+			'signature' => $this->generateSignature(
+				(string) $cartId,
+				$amount,
+				$currency,
+				Configuration::get('PAYDO_SECRET_KEY')
+			),
+			'language' => $language,
+		];
 
-        /**
-         * Place the order
-         */
-        $this->module->validateOrder(
-            (int) $this->context->cart->id,
-            Configuration::get('PS_OS_PAYDO_PENDING_STATE'),
-            (float) $this->context->cart->getOrderTotal(true, Cart::BOTH),
-            $this->module->displayName,
-            null,
-            null,
-            (int) $this->context->currency->id,
-            false,
-            $customer->secure_key
-        );
+		try {
+			// Send request to Paydo API
+			$url = 'https://api.paydo.com/v1/invoices/create';
+			$ch = curl_init($url);
+			curl_setopt($ch, CURLOPT_POST, 1);
+			curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($request));
+			curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+			curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+			curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+			$result = curl_exec($ch);
+			curl_close($ch);
 
-        try {
-            $order = new Order($this->module->currentOrder);
-            $currency = Currency::getCurrency($order->id_currency);
-            $order_products = $order->getProducts();
-            $paydo_order_items = array();
-            foreach ($order_products as $product) {
-                $item = array(
-                    'id' => $product['product_id'],
-                    'name' => $product['product_name'],
-                    'price' => $product['unit_price_tax_incl']
-                );
-                array_push($paydo_order_items, $item);
-            }
-            $language = Configuration::get('PAYDO_LANGUAGE');
-            $address = new Address($cart->id_address_delivery);
+			$response = json_decode($result, true);
 
-            $request = array();
-            $request['publicKey'] = Configuration::get('PAYDO_PUBLIC_KEY');
-            $request['order']['id'] = strval($this->module->currentOrder);
-            $request['order']['amount'] = $order->total_paid;
-            $request['order']['currency'] = $currency['iso_code'];
-            $request['order']['description'] = $this->l('Payment order #').$this->module->currentOrder;
-            $request['order']['items'] = $paydo_order_items;
-            $request['payer']['email'] = $customer->email;
-            $request['payer']['name'] = $customer->firstname.' '.$customer->lastname;
-            $request['payer']['phone'] = $address->phone;
-            if (!empty(Configuration::get('DIRECTPAY_ID'))) {
-                $request['paymentMethod'] = Configuration::get('DIRECTPAY_ID');
-            }
-            $request['resultUrl'] = _PS_BASE_URL_.__PS_BASE_URI__.$language.
-              "/order-confirmation?id_cart=".(int)$cart->id."&id_module=".
-              (int)$this->module->id."&id_order=".$this->module->currentOrder."&key=".$customer->secure_key;
-            $request['failPath'] = _PS_BASE_URL_.__PS_BASE_URI__."index.php?fc=module&module=paydo&controller=failPage";
-            $request['signature'] = $this->generateSignature(
-                strval($this->module->currentOrder),
-                $order->total_paid,
-                $currency['iso_code'],
-                Configuration::get('PAYDO_SECRET_KEY')
-            );
-            $request['language'] = $language;
+			// Redirect user to payment page or failure page
+			if (isset($response['data'])) {
+				Tools::redirect('https://checkout.paydo.com/' . $language . '/payment/invoice-preprocessing/' . $response['data']);
+			} else {
+				Tools::redirect(_PS_BASE_URL_ . __PS_BASE_URI__ . "index.php?fc=module&module=paydo&controller=failPage&cart_id=" . $cartId);
+			}
+		} catch (Exception $e) {
+			PrestaShopLogger::addLog("[Paydo] Exception: " . $e->getMessage());
+			Tools::redirect(_PS_BASE_URL_ . __PS_BASE_URI__ . "index.php?fc=module&module=paydo&controller=failPage&cart_id=" . $cartId);
+		}
+	}
 
-            $url = 'https://paydo.com/v1/invoices/create';
-            $request = json_encode($request);
-            $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_POST, 1);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, $request);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type:application/json']);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_HEADER, true);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            $result = curl_exec($ch);
-            PrestaShopLogger::addLog("".$result);
-            $header_size = curl_getinfo($ch, CURLINFO_HEADER_SIZE);
-            $headers = substr($result, 0, $header_size);
-            PrestaShopLogger::addLog($headers);
-            $headers = explode("\r\n", $headers);
-            $invoice_identifier = preg_grep("/^identifier/", $headers);
-            $invoice_identifier = implode(',', $invoice_identifier);
-            $invoice_identifier = substr($invoice_identifier, strrpos($invoice_identifier, ':')+2);
-            curl_close($ch);
-            Tools::redirect('https://paydo.com/'.$language.'/payment/invoice-preprocessing/'.
-              $invoice_identifier);
-        } catch (PrestaShopDatabaseException $e) {
-            PrestaShopLogger::addLog($e);
-        } catch (PrestaShopException $e) {
-            PrestaShopLogger::addLog($e);
-        }
-    }
+	/**
+	 * Signature generation
+	 * Paydo requires sorting parameters before signing
+	 *
+	 * @param string $orderId
+	 * @param float $amount
+	 * @param string $currency
+	 * @param string $secretKey
+	 *
+	 * @return string
+	 */
+	private function generateSignature($orderId, $amount, $currency, $secretKey)
+	{
+		$data = [
+			'id' => (string) $orderId,
+			'amount' => number_format((float) $amount, 2, '.', ''),
+			'currency' => $currency,
+		];
 
-    /**
-     * Generate signature
-     *
-     * @param $orderId
-     * @param $amount
-     * @param $currency
-     * @param $secretKey
-     *
-     * @return string
-     */
-    private function generateSignature($orderId, $amount, $currency, $secretKey)
-    {
-        $sign_str = ['id' => $orderId, 'amount' => $amount, 'currency' => $currency];
-        ksort($sign_str, SORT_STRING);
-        $sign_data = array_values($sign_str);
-        array_push($sign_data, $secretKey);
-        return hash('sha256', implode(':', $sign_data));
-    }
+		ksort($data, SORT_STRING);
+		$stringToSign = implode(':', array_values($data)) . ':' . $secretKey;
+
+		return hash('sha256', $stringToSign);
+	}
 }
