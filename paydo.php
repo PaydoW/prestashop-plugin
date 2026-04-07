@@ -34,12 +34,14 @@ class Paydo extends PaymentModule
 		return parent::install()
 			&& $this->registerHook('PaymentOptions')
 			&& $this->registerHook('PaymentReturn')
-			&& $this->installOrderState();
+			&& $this->installOrderState()
+			&& $this->installDb();
 	}
 
 	public function uninstall()
 	{
-		return parent::uninstall();
+		return $this->uninstallDb()
+			&& parent::uninstall();
 	}
 
 	public function processConfiguration()
@@ -135,5 +137,30 @@ class Paydo extends PaymentModule
 			return;
 		}
 		return $this->fetch('module:paydo/views/templates/hook/payment_return.tpl');
+	}
+
+	private function installDb()
+	{
+		$sql = "CREATE TABLE IF NOT EXISTS `" . _DB_PREFIX_ . "paydo_order_transactions` (
+			`id_paydo_order_transaction` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+			`order_id` INT UNSIGNED NOT NULL DEFAULT 0,
+			`cart_id` INT UNSIGNED NOT NULL,
+			`transaction_id` VARCHAR(255) DEFAULT NULL,
+			`invoice_id` VARCHAR(255) NOT NULL,
+			`created_at` DATETIME NOT NULL,
+			`updated_at` DATETIME NOT NULL,
+			UNIQUE KEY `uniq_cart_id` (`cart_id`),
+			KEY `idx_order_id` (`order_id`),
+			KEY `idx_transaction_id` (`transaction_id`),
+			KEY `idx_invoice_id` (`invoice_id`)
+		) ENGINE=" . _MYSQL_ENGINE_ . " DEFAULT CHARSET=utf8mb4;";
+
+		return Db::getInstance()->execute($sql);
+	}
+
+	private function uninstallDb()
+	{
+		$sql = "DROP TABLE IF EXISTS `" . _DB_PREFIX_ . "paydo_order_transactions`;";
+		return Db::getInstance()->execute($sql);
 	}
 }

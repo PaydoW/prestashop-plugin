@@ -72,15 +72,16 @@ class PaydoValidationModuleFrontController extends ModuleFrontController
 			curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($request));
 			curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
 			curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-			curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-			curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+			curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+			curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
 			$result = curl_exec($ch);
 			curl_close($ch);
 
 			$response = json_decode($result, true);
 
-			// Redirect user to payment page or failure page
-			if (isset($response['data'])) {
+			if (isset($response['data']) && !empty($response['data'])) {
+				$this->saveInvoiceData($cartId, $response['data']);
+
 				Tools::redirect('https://checkout.paydo.com/' . $language . '/payment/invoice-preprocessing/' . $response['data']);
 			} else {
 				Tools::redirect(_PS_BASE_URL_ . __PS_BASE_URI__ . "index.php?fc=module&module=paydo&controller=failPage&cart_id=" . $cartId);
@@ -114,5 +115,33 @@ class PaydoValidationModuleFrontController extends ModuleFrontController
 		$stringToSign = implode(':', array_values($data)) . ':' . $secretKey;
 
 		return hash('sha256', $stringToSign);
+	}
+
+	private function saveInvoiceData($cart_id, $invoice_id)
+	{
+		$existing_id = (int) Db::getInstance()->getValue(
+			'SELECT id_paydo_order_transaction
+			FROM `' . _DB_PREFIX_ . 'paydo_order_transactions`
+			WHERE cart_id = ' . (int) $cart_id
+		);
+
+		$data = [
+			'cart_id' => (int) $cart_id,
+			'invoice_id' => pSQL($invoice_id),
+			'updated_at' => date('Y-m-d H:i:s'),
+		];
+
+		if ($existing_id) {
+			return Db::getInstance()->update(
+				'paydo_order_transactions',
+				$data,
+				'id_paydo_order_transaction = ' . (int) $existing_id
+			);
+		}
+
+		$data['order_id'] = 0;
+		$data['created_at'] = date('Y-m-d H:i:s');
+
+		return Db::getInstance()->insert('paydo_order_transactions', $data);
 	}
 }

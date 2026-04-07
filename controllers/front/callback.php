@@ -14,81 +14,177 @@ class PaydoCallbackModuleFrontController extends ModuleFrontController
 		$rawData = file_get_contents('php://input');
 
 		if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-			header("HTTP/1.1 400 Bad Request");
-			exit;
+			$this->respondBadRequest();
 		}
 
 		$callback = json_decode($rawData, false);
 		if (!$callback) {
-			header("HTTP/1.1 400 Bad Request");
-			exit;
+			$this->respondBadRequest();
 		}
 
-		if (!isset($callback->transaction->order->id, $callback->transaction->state, $callback->invoice->id)) {
-			header("HTTP/1.1 400 Bad Request");
-			exit;
+		if (!isset($callback->transaction->order->id, $callback->invoice->id)) {
+			$this->respondBadRequest();
 		}
 
 		$cart_id = (int) $callback->transaction->order->id;
-		$state = (int) $callback->transaction->state;
-		$invoice_id = $callback->invoice->id;
+		$invoice_id = (string) $callback->invoice->id;
 
-		// get id order from id cart
-		$order_id = Order::getIdByCartId($cart_id);
+		$order_id = (int) Order::getIdByCartId($cart_id);
 		if (!$order_id) {
-			header("HTTP/1.1 400 Bad Request");
-			exit;
+			$this->respondBadRequest();
 		}
 
-		// Fetch the order
 		$order = new Order($order_id);
 		if (!Validate::isLoadedObject($order)) {
-			header("HTTP/1.1 400 Bad Request");
-			exit;
+			$this->respondBadRequest();
 		}
 
-		// Get PrestaShop order statuses
-		$paid_status = Configuration::get('PS_OS_PAYMENT'); // Paid
-		$failed_status = Configuration::get('PS_OS_ERROR'); // Failed
-		$pending_status = Configuration::get('PS_OS_PAYDO_PENDING_STATE'); // Pending
-		$timeout_status = Configuration::get('PS_OS_CANCELED'); // Timeout
+		$stored_invoice_id = $this->getStoredInvoiceIdByCartId($cart_id);
+		if (!$stored_invoice_id) {
+			$this->respondForbidden();
+		}
 
+		if ((string) $stored_invoice_id !== (string) $invoice_id) {
+			$this->respondForbidden();
+		}
+
+		$invoice_data = $this->getPaydoInvoice($invoice_id);
+		if (!$invoice_data) {
+			$this->respondForbidden();
+		}
+
+		if (!$this->isInvoiceValidForOrder($invoice_data, $order, $cart_id, $invoice_id)) {
+			$this->respondForbidden();
+		}
+
+		$paid_status = (int) Configuration::get('PS_OS_PAYMENT');
+		$failed_status = (int) Configuration::get('PS_OS_ERROR');
+		$pending_status = (int) Configuration::get('PS_OS_PAYDO_PENDING_STATE');
+
+		$current_state = (int) $order->current_state;
 		$history = new OrderHistory();
 		$history->id_order = $order_id;
 
-		// Handle transaction states
-		switch ($state) {
-			case 1: // new
-			case 4: // pending
-			case 9: // pre-approved → Use pending
-				$history->changeIdOrderState($pending_status, $order_id);
+		$invoice_status = isset($invoice_data['status']) ? (int) $invoice_data['status'] : -1;
+
+		switch ($invoice_status) {
+			case 1: // paid
+				if ($current_state !== $paid_status) {
+					$history->changeIdOrderState($paid_status, $order_id);
+					$history->addWithemail();
+					$order->setCurrentState($paid_status);
+					$order->save();
+				}
 				break;
 
-			case 2: // accepted (paid successfully)
-				$history->changeIdOrderState($paid_status, $order_id);
-				$history->addWithemail();
-				$order->setCurrentState($paid_status);
-				$order->save();
-				break;
-
-			case 3: // failed
-			case 5: // failed (payment error)
-				$history->changeIdOrderState($failed_status, $order_id);
-				$history->addWithemail();
-				$order->setCurrentState($failed_status);
-				$order->save();
-				break;
-
-			case 15: // timeout
-				$history->changeIdOrderState($timeout_status, $order_id);
+			case 0: // new / unpaid
+				if ($current_state !== $pending_status) {
+					$history->changeIdOrderState($pending_status, $order_id);
+				}
 				break;
 
 			default:
-				header("HTTP/1.1 400 Bad Request");
-				exit;
+				$this->respondBadRequest();
 		}
 
-		header("HTTP/1.1 200 OK");
+		header('HTTP/1.1 200 OK');
+		exit;
+	}
+
+	private function getStoredInvoiceIdByCartId($cart_id)
+	{
+		$sql = 'SELECT invoice_id
+			FROM `' . _DB_PREFIX_ . 'paydo_order_transactions`
+			WHERE cart_id = ' . (int) $cart_id;
+
+		$invoice_id = Db::getInstance()->getValue($sql);
+
+		return $invoice_id ? (string) $invoice_id : false;
+	}
+
+	private function getPaydoInvoice($invoice_id)
+	{
+		if (!$invoice_id) {
+			return false;
+		}
+
+		$url = 'https://api.paydo.com/v1/invoices/' . rawurlencode($invoice_id);
+
+		$ch = curl_init($url);
+		curl_setopt($ch, CURLOPT_HTTPGET, true);
+		curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+		curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+		curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+		curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 10);
+		curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, 2);
+		curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, true);
+
+		$result = curl_exec($ch);
+		$http_code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+		$curl_error = curl_error($ch);
+
+		curl_close($ch);
+
+		if ($curl_error || $http_code !== 200 || !$result) {
+			return false;
+		}
+
+		$response = json_decode($result, true);
+
+		if (!is_array($response) || !isset($response['data']) || !is_array($response['data'])) {
+			return false;
+		}
+
+		return $response['data'];
+	}
+
+	private function isInvoiceValidForOrder(array $invoice_data, Order $order, $cart_id, $invoice_id)
+	{
+		if (!isset($invoice_data['identifier'], $invoice_data['status'])) {
+			return false;
+		}
+
+		if ((string) $invoice_data['identifier'] !== (string) $invoice_id) {
+			return false;
+		}
+
+		if (isset($invoice_data['orderIdentifier']) && (string) $invoice_data['orderIdentifier'] !== (string) $cart_id) {
+			return false;
+		}
+
+		if (isset($invoice_data['amount'])) {
+			$order_amount = (float) $order->total_paid;
+			$invoice_amount = (float) $invoice_data['amount'];
+
+			if (abs($order_amount - $invoice_amount) > 0.01) {
+				return false;
+			}
+		}
+
+		if (isset($invoice_data['currency'])) {
+			$currency = new Currency((int) $order->id_currency);
+
+			if (!Validate::isLoadedObject($currency)) {
+				return false;
+			}
+
+			if (strtoupper((string) $invoice_data['currency']) !== strtoupper((string) $currency->iso_code)) {
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	private function respondBadRequest()
+	{
+		header('HTTP/1.1 400 Bad Request');
+		exit;
+	}
+
+	private function respondForbidden()
+	{
+		header('HTTP/1.1 403 Forbidden');
 		exit;
 	}
 }
