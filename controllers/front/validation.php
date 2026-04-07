@@ -79,10 +79,16 @@ class PaydoValidationModuleFrontController extends ModuleFrontController
 
 			$response = json_decode($result, true);
 
-			if (isset($response['data']) && !empty($response['data'])) {
+			if (
+				isset($response['data']) &&
+				is_string($response['data']) &&
+				$this->isValidInvoiceId($response['data'])
+			) {
 				$this->saveInvoiceData($cartId, $response['data']);
 
-				Tools::redirect('https://checkout.paydo.com/' . $language . '/payment/invoice-preprocessing/' . $response['data']);
+				Tools::redirect(
+					'https://checkout.paydo.com/' . rawurlencode($language) . '/payment/invoice-preprocessing/' . rawurlencode($response['data'])
+				);
 			} else {
 				Tools::redirect(_PS_BASE_URL_ . __PS_BASE_URI__ . "index.php?fc=module&module=paydo&controller=failPage&cart_id=" . $cartId);
 			}
@@ -143,5 +149,13 @@ class PaydoValidationModuleFrontController extends ModuleFrontController
 		$data['created_at'] = date('Y-m-d H:i:s');
 
 		return Db::getInstance()->insert('paydo_order_transactions', $data);
+	}
+
+	private function isValidInvoiceId($invoice_id)
+	{
+		return (bool) preg_match(
+			'/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i',
+			(string) $invoice_id
+		);
 	}
 }
