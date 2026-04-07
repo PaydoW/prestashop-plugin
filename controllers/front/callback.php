@@ -39,6 +39,10 @@ class PaydoCallbackModuleFrontController extends ModuleFrontController
 			$this->respondBadRequest();
 		}
 
+		if ((string) $order->module !== 'paydo') {
+			$this->respondForbidden();
+		}
+
 		$stored_invoice_id = $this->getStoredInvoiceIdByCartId($cart_id);
 		if (!$stored_invoice_id) {
 			$this->respondForbidden();
