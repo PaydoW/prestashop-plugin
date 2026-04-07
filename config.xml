@@ -2,7 +2,7 @@
 <module>
 	<name>Paydo</name>
 	<displayName><![CDATA[Paydo]]></displayName>
-	<version><![CDATA[2.0]]></version>
+	<version><![CDATA[2.1]]></version>
 	<description><![CDATA[Make payments via Paydo]]></description>
 	<author><![CDATA[Paydo]]></author>
 	<tab><![CDATA[payments_gateways]]></tab>
