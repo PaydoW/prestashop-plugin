@@ -26,18 +26,15 @@ class PaydoCallbackModuleFrontController extends ModuleFrontController
 			$this->respondBadRequest();
 		}
 
-		$cart_id = (int) $callback->transaction->order->id;
+		$order_id = (int) $callback->transaction->order->id;
 		$invoice_id = (string) $callback->invoice->id;
-
-		$order_id = (int) Order::getIdByCartId($cart_id);
-		if (!$order_id) {
-			$this->respondBadRequest();
-		}
 
 		$order = new Order($order_id);
 		if (!Validate::isLoadedObject($order)) {
 			$this->respondBadRequest();
 		}
+
+		$cart_id = (int) $order->id_cart;
 
 		if ((string) $order->module !== 'paydo') {
 			$this->respondForbidden();
@@ -57,7 +54,7 @@ class PaydoCallbackModuleFrontController extends ModuleFrontController
 			$this->respondForbidden();
 		}
 
-		if (!$this->isInvoiceValidForOrder($invoice_data, $order, $cart_id, $invoice_id)) {
+		if (!$this->isInvoiceValidForOrder($invoice_data, $order, $invoice_id)) {
 			$this->respondForbidden();
 		}
 
@@ -142,7 +139,7 @@ class PaydoCallbackModuleFrontController extends ModuleFrontController
 		return $response['data'];
 	}
 
-	private function isInvoiceValidForOrder(array $invoice_data, Order $order, $cart_id, $invoice_id)
+	private function isInvoiceValidForOrder(array $invoice_data, Order $order, $invoice_id)
 	{
 		if (!isset($invoice_data['identifier'], $invoice_data['status'])) {
 			return false;
@@ -152,8 +149,10 @@ class PaydoCallbackModuleFrontController extends ModuleFrontController
 			return false;
 		}
 
-		if (isset($invoice_data['orderIdentifier']) && (string) $invoice_data['orderIdentifier'] !== (string) $cart_id) {
-			return false;
+		if (isset($invoice_data['orderIdentifier'])) {
+			if ((string) $invoice_data['orderIdentifier'] !== (string) $order->id) {
+				return false;
+			}
 		}
 
 		if (isset($invoice_data['amount'])) {

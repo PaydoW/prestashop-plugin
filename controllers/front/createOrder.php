@@ -6,17 +6,24 @@ class PaydoCreateOrderModuleFrontController extends ModuleFrontController
 
 	public function postProcess()
 	{
-		$cartId = (int) Tools::getValue('cart_id');
-		if (!$cartId) {
+		$orderId = (int) Tools::getValue('id_order');
+
+		if (!$orderId) {
 			Tools::redirect($this->context->link->getPageLink('index', true));
 		}
 
+		$order = new Order($orderId);
+		if (!Validate::isLoadedObject($order)) {
+			Tools::redirect($this->context->link->getPageLink('index', true));
+		}
+
+		$cartId = (int) $order->id_cart;
 		$cart = new Cart($cartId);
 		if (!Validate::isLoadedObject($cart)) {
 			Tools::redirect($this->context->link->getPageLink('index', true));
 		}
 
-		$customer = new Customer((int) $cart->id_customer);
+		$customer = new Customer((int) $order->id_customer);
 		if (!Validate::isLoadedObject($customer)) {
 			Tools::redirect($this->context->link->getPageLink('index', true));
 		}
@@ -31,32 +38,6 @@ class PaydoCreateOrderModuleFrontController extends ModuleFrontController
 		$module = Module::getInstanceByName('paydo');
 		if (!$module) {
 			Tools::redirect($this->context->link->getModuleLink('paydo', 'failPage', ['cart_id' => $cartId], true));
-		}
-
-		$pendingState = (int) Configuration::get('PS_OS_PAYDO_PENDING_STATE') ?: (int) Configuration::get('PS_OS_PREPARATION');
-
-		if (!$cart->orderExists()) {
-			$module->validateOrder(
-				$cartId,
-				$pendingState,
-				(float) $cart->getOrderTotal(true, Cart::BOTH),
-				$module->displayName,
-				null,
-				null,
-				(int) $cart->id_currency,
-				false,
-				$secureKey
-			);
-
-			$orderId = (int) $module->currentOrder;
-		} else {
-			$orderId = (int) Order::getIdByCartId($cartId);
-		}
-
-		if (!$orderId) {
-			$orderId = (int) Db::getInstance()->getValue(
-				'SELECT id_order FROM ' . _DB_PREFIX_ . 'orders WHERE id_cart=' . (int) $cartId
-			);
 		}
 
 		if ($orderId) {

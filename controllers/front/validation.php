@@ -17,6 +17,11 @@ class PaydoValidationModuleFrontController extends ModuleFrontController
 			Tools::redirect('index.php?controller=order&step=1');
 		}
 
+		$orderId = $this->getOrCreateOrderId($cart, $customer);
+		if (!$orderId) {
+			Tools::redirect(_PS_BASE_URL_ . __PS_BASE_URI__ . "index.php?fc=module&module=paydo&controller=failPage&cart_id=" . $cartId);
+		}
+
 		$items = [];
 		foreach ($cart->getProducts() as $product) {
 			$items[] = [
@@ -36,10 +41,10 @@ class PaydoValidationModuleFrontController extends ModuleFrontController
 		$request = [
 			'publicKey' => Configuration::get('PAYDO_PUBLIC_KEY'),
 			'order' => [
-				'id' => (string) $cartId,
+				'id' => (string) $orderId,
 				'amount' => $amount,
 				'currency' => $currency,
-				'description' => 'Payment order #' . $cartId,
+				'description' => 'Payment order #' . $orderId,
 				'items' => $items,
 			],
 			'payer' => [
@@ -52,11 +57,12 @@ class PaydoValidationModuleFrontController extends ModuleFrontController
 			],
 			'resultUrl' => $this->context->link->getModuleLink($this->module->name, 'createOrder', [
 				'cart_id' => $cartId,
+				'id_order' => $orderId,
 				'key' => $customer->secure_key,
 			], true),
 			'failPath' => $this->context->link->getModuleLink($this->module->name, 'failPage', ['cart_id' => $cartId], true),
 			'signature' => $this->generateSignature(
-				(string) $cartId,
+				(string) $orderId,
 				$amount,
 				$currency,
 				Configuration::get('PAYDO_SECRET_KEY')
@@ -84,7 +90,7 @@ class PaydoValidationModuleFrontController extends ModuleFrontController
 				is_string($response['data']) &&
 				$this->isValidInvoiceId($response['data'])
 			) {
-				$this->saveInvoiceData($cartId, $response['data']);
+				$this->saveInvoiceData($cartId, $orderId, $response['data']);
 
 				Tools::redirect(
 					'https://checkout.paydo.com/' . rawurlencode($language) . '/payment/invoice-preprocessing/' . rawurlencode($response['data'])
@@ -123,7 +129,47 @@ class PaydoValidationModuleFrontController extends ModuleFrontController
 		return hash('sha256', $stringToSign);
 	}
 
-	private function saveInvoiceData($cart_id, $invoice_id)
+	private function getOrCreateOrderId(Cart $cart, Customer $customer)
+	{
+		$cartId = (int) $cart->id;
+		$orderId = (int) Order::getIdByCartId($cartId);
+
+		if ($orderId) {
+			return $orderId;
+		}
+
+		$module = Module::getInstanceByName('paydo');
+		if (!$module) {
+			return 0;
+		}
+
+		$pendingState = (int) Configuration::get('PS_OS_PAYDO_PENDING_STATE') ?: (int) Configuration::get('PS_OS_PREPARATION');
+
+		if (!$cart->orderExists()) {
+			$module->validateOrder(
+				$cartId,
+				$pendingState,
+				(float) $cart->getOrderTotal(true, Cart::BOTH),
+				$module->displayName,
+				null,
+				null,
+				(int) $cart->id_currency,
+				false,
+				(string) $customer->secure_key
+			);
+		}
+
+		$orderId = (int) $module->currentOrder;
+		if ($orderId) {
+			return $orderId;
+		}
+
+		return (int) Db::getInstance()->getValue(
+			'SELECT id_order FROM ' . _DB_PREFIX_ . 'orders WHERE id_cart=' . (int) $cartId
+		);
+	}
+
+	private function saveInvoiceData($cart_id, $order_id, $invoice_id)
 	{
 		$existing_id = (int) Db::getInstance()->getValue(
 			'SELECT id_paydo_order_transaction
@@ -133,6 +179,7 @@ class PaydoValidationModuleFrontController extends ModuleFrontController
 
 		$data = [
 			'cart_id' => (int) $cart_id,
+			'order_id' => (int) $order_id,
 			'invoice_id' => pSQL($invoice_id),
 			'updated_at' => date('Y-m-d H:i:s'),
 		];
@@ -145,7 +192,6 @@ class PaydoValidationModuleFrontController extends ModuleFrontController
 			);
 		}
 
-		$data['order_id'] = 0;
 		$data['created_at'] = date('Y-m-d H:i:s');
 
 		return Db::getInstance()->insert('paydo_order_transactions', $data);
