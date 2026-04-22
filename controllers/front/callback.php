@@ -73,8 +73,6 @@ class PaydoCallbackModuleFrontController extends ModuleFrontController
 				if ($current_state !== $paid_status) {
 					$history->changeIdOrderState($paid_status, $order_id);
 					$history->addWithemail();
-					$order->setCurrentState($paid_status);
-					$order->save();
 				}
 				break;
 
