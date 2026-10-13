@@ -1,85 +1,56 @@
 # Paydo Payment Gateway for PrestaShop
 
-Accept online payments in **PrestaShop** via [Paydo.com](https://paydo.com).
+Accept online payments in PrestaShop via [Paydo](https://paydo.com).
 
 ## Requirements
-- PrestaShop **8.0+**
 
----
+- PrestaShop 8.0 or later
+- PHP cURL extension
+- PayDo Public Key and Secret Key
+- Project ID and JWT Token when separate payment methods are enabled
 
-## Installation and Setup (via PrestaShop Admin Panel)
+## Installation
 
-### 1) Upload the module
-1. Go to the [latest release](https://github.com/PaydoW/prestashop-plugin/releases).
-2. Download the latest **`paydo.zip`** file.
-3. In your PrestaShop admin panel go to **Modules → Module Manager → Upload a module**.
-4. Drag & drop the `paydo.zip` file or select it manually.
-5. Wait until the module is successfully installed.
+1. Download `paydo.zip` from the [latest release](https://github.com/PaydoW/prestashop-plugin/releases).
+2. In PrestaShop, open **Modules → Module Manager → Upload a module**.
+3. Upload `paydo.zip` and wait for the installation to finish.
+4. Find **Paydo** in the module list and open **Configure**.
+5. Enter the Public Key and Secret Key, enable payments, and save the settings.
 
-### 2) Enable the module
-1. After installation, locate **Paydo Payment Gateway** in the **Modules list**.
-2. Click **Enable** to activate the module.
+## Updating from an older version
 
-### 3) Configure the payment method
-1. Go to **Modules → Module Manager**.
-2. Find **Paydo Payment Gateway** and click **Configure**.
-3. In the settings form, fill in:
-   - **Public Key** — your Paydo project Public Key.
-   - **Secret Key** — your Paydo project Secret Key.
-   - **IPN URL** — automatically generated link. Copy this link into your Paydo dashboard.
-   - Set **Status → Enabled**.
+Do not uninstall the existing module. Upload the new `paydo.zip` over it through **Modules → Module Manager → Upload a module**. PrestaShop will run the included upgrade automatically and preserve the existing PayDo keys and transactions.
 
----
+Back up the shop files and database before updating.
 
-## How to get Public/Secret Keys and configure IPN in Paydo
+## Payment options
 
-### Public/Secret Keys
-1. Log in to your account on **Paydo.com**.
-2. Go to **Overview → Project (website) details**.
-3. Open the **General information** tab.
-4. Copy your **Public Key** and **Secret Key** and paste them into the module settings in PrestaShop.
+By default, customers are redirected to the common PayDo Hosted Page.
 
-### IPN (payment notifications)
-1. In your Paydo dashboard go to **IPN settings**.
-2. Click **Add new IPN**.
-3. Paste the **IPN URL** from the module settings in PrestaShop.
-4. Save.
+To show selected PayDo methods directly at checkout:
 
-> **Note:** Without correct IPN setup your PrestaShop store will not automatically receive payment status updates.
+1. Enable **Internet Acquiring payment methods**.
+2. Enter the PayDo **Project ID** and **JWT Token**.
+3. Click **Sync from PayDo**.
+4. Choose whether to show the common Hosted Page.
+5. Select the individual payment methods and save the settings.
 
----
+The JWT Token is used only to synchronize the available payment methods. Newly synchronized methods are not enabled automatically.
+
+## IPN setup
+
+1. Copy the **IPN URL** shown in the module settings.
+2. Sign in to PayDo and open the project IPN settings.
+3. Add the copied URL and save it.
+
+Without a configured IPN URL, the shop will not receive automatic payment status updates.
 
 ## Support
 
-* [Open an issue](https://github.com/PaydoW/prestashop-plugin/issues) if you are having issues with this module.
-* [PayDo Documentation](https://github.com/PaydoW/paydo-api-doc)
-* [Contact PayDo support](https://paydo.com/contacts-page-customer-support/)
-
-**TIP**: When contacting support it will help us if you provide:
-
-* PrestaShop Version
-* PHP Version and MySQL Version
-* Theme in use
-* Other modules you have installed (some may conflict)
-* Configuration settings for the module (screenshots recommended)
-* Any log files that will help (e.g., web server error logs)
-* Screenshots of error messages if applicable
-
----
-
-## Contribute
-
-Would you like to help with this project? Great! You don’t have to be a developer, either.
-If you’ve found a bug or have an idea for an improvement, please open an [issue](https://github.com/PaydoW/prestashop-plugin/issues) and tell us about it.
-
-If you *are* a developer wanting to contribute an enhancement, bugfix or other patch to this project,
-please fork this repository and submit a pull request detailing your changes. We review all PRs!
-
-This open-source project is released under the [MIT license](http://opensource.org/licenses/MIT),
-which means you are free to use this project’s code in your own project.
-
----
+- [GitHub issues](https://github.com/PaydoW/prestashop-plugin/issues)
+- [PayDo API documentation](https://github.com/PaydoW/paydo-api-doc)
+- [PayDo support](https://paydo.com/contacts-page-customer-support/)
 
 ## License
 
-Please refer to the [LICENSE](https://github.com/PaydoW/prestashop-plugin/blob/master/LICENSE) file that came with this project.
+This project is licensed under the [MIT License](LICENSE).
